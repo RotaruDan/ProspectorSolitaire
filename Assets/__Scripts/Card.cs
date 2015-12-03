@@ -74,7 +74,9 @@ public class Card : MonoBehaviour
                     tSR.sortingOrder = sOrd + 2;
                     // ^ Set it to the highest layer to cover everything else
                     break;
-                case "face": // if the name is "face"
+                case "Card_Front": // if the name is "face"
+                    tSR.sortingOrder = 0;
+                    break;
                 default:     // or if it's anything else
                     tSR.sortingOrder = sOrd + 1;
                     // ^ Set it to the middle layer to be above the background
