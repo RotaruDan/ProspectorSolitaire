@@ -2,9 +2,26 @@
 using System.Collections;
 using System.Collections.Generic;
 
+// An enum to handle all the possible scoring events
+public enum ScoreEvent
+{
+    draw,
+    mine,
+    mineGold,
+    gameWin,
+    gameLoss
+}
+
 public class Prospector : MonoBehaviour
 {
     static public Prospector S;
+    static public int SCORE_FROM_PREV_ROUND = 0;
+    static public int HIGH_SCORE = 0;
+
+    public Vector3 fsPosMid = new Vector3(0.5f, 0.90f, 0);
+    public Vector3 fsPosRun = new Vector3(0.5f, 0.75f, 0);
+    public Vector3 fsPosMid2 = new Vector3(0.5f, 0.5f, 0);
+    public Vector3 fsPosEnd = new Vector3(1.0f, 0.65f, 0);
 
     public Deck deck;
     public TextAsset deckXML;
@@ -22,13 +39,30 @@ public class Prospector : MonoBehaviour
 
     public List<CardProspector> drawPile;
 
+    // Fields to track score info
+    public int chain = 0; // of cards in this run
+    public int scoreRun = 0;
+    public int score = 0;
+    public FloatingScore fsRun;
+
     void Awake()
     {
         S = this; // Set up a Singleton for Prospector
+                  // Check for a high score in PlayerPrefs
+        if (PlayerPrefs.HasKey("ProspectorHighScore"))
+        {
+            HIGH_SCORE = PlayerPrefs.GetInt("ProspectorHighScore");
+        }
+        // Add the score from last round, which will be >0 if it was a win
+        score += SCORE_FROM_PREV_ROUND;
+        // And reset the SCORE_FROM_PREV_ROUND
+        SCORE_FROM_PREV_ROUND = 0;
     }
 
     void Start()
     {
+        Scoreboard.S.score = score;
+
         deck = GetComponent<Deck>(); // Get the Deck
         deck.InitDeck(deckXML.text); // Pass DeckXML to it
         Deck.Shuffle(ref deck.cards);    // This shuffles the deck
@@ -130,6 +164,7 @@ public class Prospector : MonoBehaviour
                 MoveToDiscard(target); // Moves the target to the discardPile
                 MoveToTarget(Draw());  // Moves the next drawn card to the target
                 UpdateDrawPile();      // Restacks the drawPile
+                ScoreManager(ScoreEvent.draw);
                 break;
             case CardState.tableau:
                 // Clicking a card in the tableau will check if it's a valid play
@@ -149,6 +184,7 @@ public class Prospector : MonoBehaviour
                 tableau.Remove(cd); // Remove it from the tableau List
                 MoveToTarget(cd);   // Make it the target card
                 SetTableauFaces();  // Update tableau card face-ups
+                ScoreManager(ScoreEvent.mine);
                 break;
         }
 
@@ -191,13 +227,113 @@ public class Prospector : MonoBehaviour
         if (won)
         {
             print("Game Over. You won! :)");
+            ScoreManager(ScoreEvent.gameWin);
         }
         else
         {
             print("Game Over. You Lost. :(");
+            ScoreManager(ScoreEvent.gameLoss);
         }
         // Reload the scene, resetting the game
         Application.LoadLevel("__Prospector_Scene_0");
+    }
+
+    // ScoreManager handles all of the scoring
+    void ScoreManager(ScoreEvent sEvt)
+    {
+        List<Vector3> fsPts;
+        switch (sEvt)
+        {
+            case ScoreEvent.draw:     // Drawing a card
+            case ScoreEvent.gameWin:  // Won the round
+            case ScoreEvent.gameLoss: // Lost the round
+                                      // The same things need to happen whether it's a draw, win, or loss
+                chain = 0;         // resets the score chain
+                score += scoreRun; // add scoreRun to total score
+                scoreRun = 0;      // reset scoreRun
+                                   // Add fsRun to the _Scoreboard score
+                if (fsRun != null)
+                {
+                    // Create points for the Bezier curve
+                    fsPts = new List<Vector3>();
+                    fsPts.Add(fsPosRun);
+                    fsPts.Add(fsPosMid2);
+                    fsPts.Add(fsPosEnd);
+                    fsRun.reportFinishTo = Scoreboard.S.gameObject;
+                    fsRun.Init(fsPts, 0, 1);
+                    // Also adjust the fontSize
+                    fsRun.fontSizes = new List<float>(new float[] { 28, 36, 4 });
+                    fsRun = null; // Clear fsRun so it's created again
+                }
+                break;
+            case ScoreEvent.mine: // Remove a mine card
+                chain++;           // increase the score chain
+                scoreRun += chain; // add score for this card to run
+                                   // Create a FloatingScore for this score
+                FloatingScore fs;
+                // Move it from the mousePosition to fsPosRun
+                Vector3 p0 = Input.mousePosition;
+                p0.x /= Screen.width;
+                p0.y /= Screen.height;
+                fsPts = new List<Vector3>();
+                fsPts.Add(p0);
+                fsPts.Add(fsPosMid);
+                fsPts.Add(fsPosRun);
+                fs = Scoreboard.S.CreateFloatingScore(chain, fsPts);
+                fs.fontSizes = new List<float>(new float[] { 4, 50, 28 });
+                if (fsRun == null)
+                {
+                    fsRun = fs;
+                    fsRun.reportFinishTo = null;
+                }
+                else
+                {
+                    fs.reportFinishTo = fsRun.gameObject;
+                }
+                break;
+        }
+        switch (sEvt)
+        {
+            // Same things need to happen whether it's a draw, a win, or a loss
+            case ScoreEvent.draw: // Drawing a card
+            case ScoreEvent.gameWin: // Won the round
+            case ScoreEvent.gameLoss: // Lost the round
+                chain = 0;         // resets the score chain
+                score += scoreRun; // add scoreRun to total score
+                scoreRun = 0;      // reset scoreRun
+                break;
+            case ScoreEvent.mine: // Remove a mine card
+                chain++;           // increase the score chain
+                scoreRun += chain; // add score for this card to run
+                break;
+        }
+
+        // This second switch statement handles round wins and losses
+        switch (sEvt)
+        {
+            case ScoreEvent.gameWin:
+                // If it's a win, add the score to the next round
+                // static fields are NOT reset by Application.LoadLevel()
+                Prospector.SCORE_FROM_PREV_ROUND = score;
+                print("You won this round! Round score: " + score);
+                break;
+            case ScoreEvent.gameLoss:
+                // If it's a loss, check against the high score
+                if (Prospector.HIGH_SCORE <= score)
+                {
+                    print("You got the high score! High score: " + score);
+                    Prospector.HIGH_SCORE = score;
+                    PlayerPrefs.SetInt("ProspectorHighScore", score);
+                }
+                else
+                {
+                    print("Your final score for the game was: " + score);
+                }
+                break;
+            default:
+                print("score: " + score + "  scoreRun:" + scoreRun + "  chain:" + chain);
+                break;
+        }
     }
 
     // This turns cards in the Mine face-up or face-down
